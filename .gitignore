@@ -24,6 +24,7 @@ share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+.gitignore
 MANIFEST
 
 # PyInstaller
@@ -126,4 +127,3 @@ dmypy.json
 deploy/
 test/
 **/.DS_Store
-faas_deployments/lambda_functions/faas_p1/bin/models/
