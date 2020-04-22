@@ -83,6 +83,9 @@ if __name__ == "__main__":
               validation_data=(x_test, y_test),
               verbose=2)
 
+    final_val_acc = history.history['val_acc'][-1]
+    print('final validation accuracy:', final_val_acc)
+
     # create a TensorFlow SavedModel for deployment to a SageMaker endpoint with TensorFlow Serving
     tf.contrib.saved_model.save_keras_model(model, args.model_dir)
 
