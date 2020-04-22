@@ -1,0 +1,200 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  LambdaExecutionRoleArn:
+    Type: String
+  StepFunctionExecutionRoleArn:
+    Type: String
+  SageMakerAPIExecutionRoleArn:
+    Type: String
+  SNSNotificationTopicArn:
+    Type: String
+  ManifestPublishingFunctionArn:
+    Type: String
+
+Resources:
+  #================================================================================
+  # ML Training State Machine
+  #================================================================================
+  MLTrainingMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: sentiment-analysis-training
+      DefinitionString: !Sub |-
+        {
+          "StartAt": "InitialiseExecution",
+          "States": {
+            "InitialiseExecution": {
+              "Type": "Task",
+              "Resource": "${InitialiseExecutionLambda.Arn}",
+              "Parameters": {
+                "data.$": "$.data",
+                "training.$": "$.training",
+                "execution.$": "$$.Execution.Id"
+              },
+              "ResultPath": "$.training.training_job_name",
+              "Catch": [
+                {
+                  "ErrorEquals": [
+                    "States.ALL"
+                  ],
+                  "ResultPath": "$",
+                  "Next": "NotifyFailure"
+                }
+              ],
+              "Next": "SageMakerTrainingJob"
+            },
+            "SageMakerTrainingJob": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::sagemaker:createTrainingJob.sync",
+              "ResultPath": "$.training",
+              "Parameters": {
+                "TrainingJobName.$": "$.training.training_job_name",
+                "AlgorithmSpecification": {
+                  "TrainingImage.$": "$.training.container",
+                  "TrainingInputMode": "File"
+                },
+                "InputDataConfig": [
+                  {
+                    "ChannelName": "train",
+                    "DataSource": {
+                      "S3DataSource": {
+                        "S3DataType": "S3Prefix",
+                        "S3Uri.$": "$.data.s3_train_data",
+                        "S3DataDistributionType": "FullyReplicated"
+                      }
+                    }
+                  },
+                  {
+                    "ChannelName": "test",
+                    "DataSource": {
+                      "S3DataSource": {
+                        "S3DataType": "S3Prefix",
+                        "S3Uri.$": "$.data.s3_test_data",
+                        "S3DataDistributionType": "FullyReplicated"
+                      }
+                    }
+                  }
+                ],
+                "ResourceConfig": {
+                  "InstanceCount.$": "$.training.training_instance_count",
+                  "InstanceType.$": "$.training.training_instance_type",
+                  "VolumeSizeInGB": 50
+                },
+                "HyperParameters": {
+                  "epochs.$": "$.training.hyperparameters.epochs",
+                  "batch_size.$": "$.training.hyperparameters.batch_size",
+                  "sagemaker_container_log_level.$": "$.training.hyperparameters.sagemaker_container_log_level",
+                  "sagemaker_enable_cloudwatch_metrics.$": "$.training.hyperparameters.sagemaker_enable_cloudwatch_metrics",
+                  "sagemaker_program.$": "$.training.hyperparameters.sagemaker_program",
+                  "sagemaker_region.$": "$.training.hyperparameters.sagemaker_region",
+                  "sagemaker_submit_directory.$": "$.training.hyperparameters.sagemaker_submit_directory"
+                },
+                "OutputDataConfig": {
+                  "S3OutputPath.$": "$.training.s3_output_path"
+                },
+                "StoppingCondition": {
+                  "MaxRuntimeInSeconds": 86400
+                },
+                "RoleArn": "${SageMakerAPIExecutionRoleArn}"
+              },
+              "Catch": [
+                {
+                  "ErrorEquals": [
+                    "States.ALL"
+                  ],
+                  "ResultPath": "$",
+                  "Next": "NotifyFailure"
+                }
+              ],
+              "Next": "ValidateModel"
+            },
+            "ValidateModel": {
+              "Type": "Task",
+              "Resource": "${ValidateModelFunction.Arn}",
+              "ResultPath": "$.validation.results",
+              "Catch": [{
+                "ErrorEquals": [ "States.ALL" ],
+                "ResultPath": "$",
+                "Next": "NotifyFailure"
+              }],
+              "Next": "PublishDeploymentManifest"
+            },
+            "PublishDeploymentManifest": {
+              "Type": "Task",
+              "Resource": "${ManifestPublishingFunctionArn}",
+              "InputPath": "$",
+              "ResultPath": "$.release_execution",
+              "Catch": [{
+                "ErrorEquals": [ "States.ALL" ],
+                "ResultPath": "$",
+                "Next": "NotifyFailure"
+              }],
+              "Next": "NotifySuccess"
+            },
+            "NotifyFailure": {
+              "Type": "Task",
+              "Resource": "${NotifyTeamFunction.Arn}",
+              "InputPath": "$",
+              "Next": "JobFailed"
+            },
+            "JobFailed": {
+              "Type": "Fail"
+            },
+            "NotifySuccess": {
+              "Type": "Task",
+              "Resource": "${NotifyTeamFunction.Arn}",
+              "InputPath": "$",
+              "End": true
+            }
+          }
+        }
+      RoleArn: !Ref StepFunctionExecutionRoleArn
+      LoggingConfiguration:
+        IncludeExecutionData: true
+        Level: ALL
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt MLTrainingStateMachineLogGroup.Arn
+
+  MLTrainingStateMachineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/stepfunctions/mlops
+  #================================================================================
+  # Lambdas orchestrated by state machine
+  #================================================================================
+  InitialiseExecutionLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: initialise_function.lambda_handler
+      Runtime: python3.6
+      CodeUri: ./lambda_functions/
+      Timeout: 60
+      Role: !Ref LambdaExecutionRoleArn
+
+  ValidateModelFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: validate_model_function.lambda_handler
+      Runtime: python3.6
+      CodeUri: ./lambda_functions/
+      Timeout: 60
+      Role: !Ref LambdaExecutionRoleArn
+
+  NotifyTeamFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: notify_team_function.lambda_handler
+      Runtime: python3.6
+      CodeUri: ./lambda_functions/
+      Timeout: 60
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref SNSNotificationTopicArn
+      Role: !Ref LambdaExecutionRoleArn
+
+Outputs:
+  MLTrainingStateMachine:
+    Value: !Ref MLTrainingMachine

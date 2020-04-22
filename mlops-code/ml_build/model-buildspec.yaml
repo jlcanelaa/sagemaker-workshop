@@ -1,0 +1,12 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - COMMIT_HASH=$CODEBUILD_RESOLVED_SOURCE_VERSION
+      - S3_PATH=s3://${TEMPLATE_BUCKET}/training/source/sourcedir.tar.gz
+
+  build:
+    commands:
+      - cd ml_build/sourcedir
+      - tar cvfz - * | aws s3 cp - ${S3_PATH}

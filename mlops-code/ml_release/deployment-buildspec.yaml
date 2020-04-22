@@ -1,0 +1,38 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - npm install -g aws-cdk
+      - pip install --upgrade aws-cdk.aws-sagemaker
+
+  pre_build:
+    commands:
+      - mkdir ml_release/deployment
+      - cd ml_release/deployment
+      - cdk init --language=python
+
+  build:
+    commands:
+      # Download deployment manifest from config repo
+      - BASE64_MANIFEST=$(aws codecommit get-file --repository-name mlops-config --commit-specifier master --file-path deployment_manifest.json | jq '.fileContent')
+      - temp="${BASE64_MANIFEST%\"}"
+      - DECODED_MANIFEST="${temp#\"}"
+      - echo ${DECODED_MANIFEST} | base64 --decode > ./deployment_manifest.json
+      # copy deployment_stack to generate CDK deployment folder
+      - cp ../deployment_stack.py ./deployment
+      - cdk synth --output ../cdk_output --path-metadata false
+
+  post_build:
+    commands:
+      - cd ../../
+      - aws cloudformation package --s3-bucket ${TEMPLATE_BUCKET} --template-file ml_release/cdk_output/deployment.template.json --output-template-file endpoint-template.yaml
+
+cache:
+  paths:
+    - '/usr/local/lib/python3.6/site-packages'
+
+artifacts:
+  files:
+    - endpoint-template.yaml
+  discard-paths: yes

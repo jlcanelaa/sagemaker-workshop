@@ -1,0 +1,14 @@
+version: 0.2
+
+phases:
+  build:
+    commands:
+      - aws cloudformation package --s3-bucket ${TEMPLATE_BUCKET} --template-file ml_build/training-template.yaml --output-template-file training-template.yaml
+cache:
+  paths:
+    - '/usr/local/lib/python3.6/site-packages'
+
+artifacts:
+  files:
+    - training-template.yaml
+  discard-paths: yes
