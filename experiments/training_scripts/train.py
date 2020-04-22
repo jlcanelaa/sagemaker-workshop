@@ -1,12 +1,7 @@
-import argparse
 import os
+import argparse
 import pandas as pd
 import tensorflow as tf
-from tensorflow.contrib.eager.python import tfe
-from keras.models import Sequential
-from keras.layers import Dense, Dropout, Activation
-from keras.layers import Embedding
-from keras.layers import Conv1D, GlobalMaxPooling1D
 
 tf.logging.set_verbosity(tf.logging.ERROR)
 
@@ -24,27 +19,26 @@ def parse_args():
     # hyperparameters sent by the client are passed as command-line arguments to the script
     parser.add_argument('--epochs', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=64)
-
-    # data directories
+    # input data and model directory
     parser.add_argument('--train', type=str, default=os.environ.get('SM_CHANNEL_TRAIN'))
     parser.add_argument('--test', type=str, default=os.environ.get('SM_CHANNEL_TEST'))
-
-    # model directory: we will use the default set by SageMaker, /opt/ml/model
     parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_MODEL_DIR'))
-    return parser.parse_known_args()
+
+    args, _ = parser.parse_known_args()
+    return args
 
 
 def get_train_data(train_dir):
     x_train = pd.read_csv(os.path.join(train_dir, 'x_train.csv'), header=None, index_col=None).values
     y_train = pd.read_csv(os.path.join(train_dir, 'y_train.csv'), header=None, index_col=None).values
-    print('x train', x_train.shape,'y train', y_train.shape)
+    print('x train', x_train.shape, 'y train', y_train.shape)
     return x_train, y_train
 
 
 def get_test_data(test_dir):
     x_test = pd.read_csv(os.path.join(test_dir, 'x_test.csv'), header=None, index_col=None).values
     y_test = pd.read_csv(os.path.join(test_dir, 'y_test.csv'), header=None, index_col=None).values
-    print('x test', x_test.shape,'y test', y_test.shape)
+    print('x test', x_test.shape, 'y test', y_test.shape)
     return x_test, y_test
 
 
@@ -66,7 +60,7 @@ def get_model():
 
 
 if __name__ == "__main__":
-    args, _ = parse_args()
+    args = parse_args()
 
     x_train, y_train = get_train_data(args.train)
     x_test, y_test = get_test_data(args.test)
@@ -74,19 +68,18 @@ if __name__ == "__main__":
     model = get_model()
 
     model.compile(loss='binary_crossentropy',
-              optimizer='adam',
-              metrics=['accuracy'])
+                  optimizer='adam',
+                  metrics=['accuracy'])
 
-    model.fit(x_train, y_train,
-              batch_size=args.batch_size,
-              epochs=args.epochs,
-              validation_data=(x_test, y_test),
-              verbose=2)
+    history = model.fit(x_train,
+                        y_train,
+                        batch_size=args.batch_size,
+                        epochs=args.epochs,
+                        validation_data=(x_test, y_test),
+                        verbose=2)
 
     final_val_acc = history.history['val_acc'][-1]
     print('final validation accuracy:', final_val_acc)
 
     # create a TensorFlow SavedModel for deployment to a SageMaker endpoint with TensorFlow Serving
     tf.contrib.saved_model.save_keras_model(model, args.model_dir)
-
-
