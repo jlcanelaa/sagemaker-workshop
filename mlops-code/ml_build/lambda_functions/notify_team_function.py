@@ -5,7 +5,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 
 SNS_TOPIC_ARN = os.environ['SNS_TOPIC_ARN']
-sns = boto3.client('sns', region_name='eu-west-1')
+sns = boto3.client('sns', region_name='us-east-1')
 
 
 def lambda_handler(event, context):
